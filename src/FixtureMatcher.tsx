@@ -55,6 +55,7 @@ export default function FixtureMatcher({ rows, fields, hasDataset }: Props) {
   const [opened, setOpened] = useState(false);
   const selected = fixtures.find(f => f.match_id === selectedId) ?? null;
   const matches = useMemo(() => search(rows, fields, selected, Number(tolerance)), [rows, fields, selected, tolerance]);
+  const usedOddsGroup = oddsGroups.find(g => g.every(aliases => field(fields, aliases)));
   const counts = {
     MS1: matches.filter(x => x.result === "MS1").length,
     MSX: matches.filter(x => x.result === "MSX").length,
@@ -87,7 +88,7 @@ export default function FixtureMatcher({ rows, fields, hasDataset }: Props) {
       {!hasDataset ? <p className="muted">Tarihsel maç arşivini CSV olarak yükleyince benzer maçlar burada listelenecek.</p> :
       matches.length > 0 ? <div className="table-scroll fixture-table"><table><thead><tr><th>Benzerlik</th><th>Skor</th><th>Sonuç</th><th>Ev oranı</th><th>Beraberlik oranı</th><th>Dep. oranı</th></tr></thead><tbody>
         {matches.slice(0, 100).map((m, i) => <tr key={i}><td>{(m.similarity * 100).toFixed(1)}%</td><td>{m.score}</td><td>{m.result}</td>
-          {oddsGroups[0].map((aliases, j) => <td key={j}>{String(m.row[(field(fields, aliases)?.field_key || "")] ?? "—")}</td>)}
+          {(usedOddsGroup || oddsGroups[0]).map((aliases, j) => <td key={j}>{String(m.row[(field(fields, aliases)?.field_key || "")] ?? "—")}</td>)}
         </tr>)}
       </tbody></table></div> : <p className="muted">Bu toleransta benzer tam 1X2 oran üçlüsü bulunamadı. Arşivde AvgH / AvgD / AvgA (veya BbAv / B365) ve FTHG / FTAG alanları bulunmalı.</p>}
       <p className="data-note">Benzerlik, marjdan arındırılmış 1X2 olasılıklarının mutlak farkıyla hesaplanır. FTHG/FTAG yalnızca geçmiş skor ve sonuç etiketinde kullanılır; bu bir tahmin veya bahis önerisi değildir. Tarihsel oran yakalama zamanları arşivde yoksa maç öncesi uygunluğu doğrulanamaz.</p>
