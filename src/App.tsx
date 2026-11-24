@@ -278,7 +278,7 @@ export default function App() {
     if (error) setMessage(error.message); else setSaved(prev => prev.filter(s => s.id !== id));
   }
   const visibleRows = rows;
-  const displayFields = fields.slice(0, 12);
+  const displayFields = fields;
   const activeDataset = datasets.find(d => d.id === datasetId);
 
   if (!client) return <main className="setup"><div className="setup-card"><div className="brand-mark"><Activity /></div><h1>Filtre Robotu</h1><p>Supabase bağlantısı henüz tanımlanmadı.</p><p className="muted">Vercel ortam değişkenlerine <code>VITE_SUPABASE_URL</code> ve <code>VITE_SUPABASE_ANON_KEY</code> eklenmeli. Yalnızca publishable/anon anahtar kullanılır; service role anahtarı tarayıcıya konmaz.</p></div></main>;
