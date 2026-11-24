@@ -141,13 +141,11 @@ export default function App() {
     } catch (err: any) {
       let cleanupWarning = "";
       if (createdId) {
-        const cleanup = await Promise.all([
-          client.from("filter_dataset_records").delete().eq("dataset_id", createdId),
-          client.from("filter_dataset_columns").delete().eq("dataset_id", createdId),
-          client.from("filter_saved_filters").delete().eq("dataset_id", createdId),
-          client.from("filter_datasets").delete().eq("id", createdId)
-        ]);
-        const cleanupError = cleanup.find(result => result.error)?.error;
+        const recordsCleanup = await client.from("filter_dataset_records").delete().eq("dataset_id", createdId);
+        const columnsCleanup = await client.from("filter_dataset_columns").delete().eq("dataset_id", createdId);
+        const filtersCleanup = await client.from("filter_saved_filters").delete().eq("dataset_id", createdId);
+        const datasetCleanup = await client.from("filter_datasets").delete().eq("id", createdId);
+        const cleanupError = recordsCleanup.error ?? columnsCleanup.error ?? filtersCleanup.error ?? datasetCleanup.error;
         if (cleanupError) cleanupWarning = ` Temizlik tamamlanamadı: ${cleanupError.message}`;
       }
       setMessage(`İçe aktarma başarısız: ${err?.message ?? "Bilinmeyen hata"}.${cleanupWarning}`);
