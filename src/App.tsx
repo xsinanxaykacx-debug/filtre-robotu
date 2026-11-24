@@ -75,7 +75,7 @@ export default function App() {
     setFilter(prev => ({ ...prev, logic: "and", domain: { ...(prev.domain ?? emptyDomain), ...patch } }));
   }
   function addOddsRange() {
-    const options = fields.filter(f => f.semantic_group === "odds" && !/istatistik|kartlar/i.test(f.source_name));
+    const options = fields.filter(f => f.semantic_group === "odds" && f.data_type === "number" && !/istatistik|kartlar|oran durumu/i.test(f.source_name));
     if (!options.length) return;
     updateDomain({ oddsRanges: [...(filter.domain?.oddsRanges ?? []), { id: crypto.randomUUID(), field: options[0].field_key, min: "", max: "" }] });
   }
@@ -297,7 +297,7 @@ export default function App() {
             <div className="domain-title"><strong>Oran aralıkları</strong><span>Her market için minimum ve maksimum oran</span></div>
             {(filter.domain?.oddsRanges ?? []).map((range, i) => <div className="condition" key={range.id} style={{display:"grid",gridTemplateColumns:"minmax(150px,1fr) 100px 100px 30px",gap:8,alignItems:"center"}}>
               <select value={range.field} onChange={e => updateDomain({oddsRanges:(filter.domain?.oddsRanges ?? []).map(x => x.id === range.id ? {...x,field:e.target.value} : x)})}>
-                {fields.filter(f => f.semantic_group === "odds" && !/istatistik|kartlar/i.test(f.source_name)).map(f => <option key={f.field_key} value={f.field_key}>{displayField(f,fields)}</option>)}
+                {fields.filter(f => f.semantic_group === "odds" && f.data_type === "number" && !/istatistik|kartlar|oran durumu/i.test(f.source_name)).map(f => <option key={f.field_key} value={f.field_key}>{displayField(f,fields)}</option>)}
               </select>
               <input inputMode="decimal" value={range.min} placeholder="Min oran" onChange={e => updateDomain({oddsRanges:(filter.domain?.oddsRanges ?? []).map(x => x.id === range.id ? {...x,min:e.target.value} : x)})}/>
               <input inputMode="decimal" value={range.max} placeholder="Maks oran" onChange={e => updateDomain({oddsRanges:(filter.domain?.oddsRanges ?? []).map(x => x.id === range.id ? {...x,max:e.target.value} : x)})}/>
