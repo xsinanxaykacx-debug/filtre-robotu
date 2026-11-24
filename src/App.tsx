@@ -92,7 +92,7 @@ export default function App() {
     const { data, error } = await client.rpc("firo_search_records", {
       p_dataset_id: id,
       p_conditions: activeConditions(definition),
-      p_logic: definition.logic,
+      p_logic: "and",
       p_search: search,
       p_limit: PAGE_SIZE,
       p_offset: pageIndex * PAGE_SIZE
@@ -120,7 +120,7 @@ export default function App() {
         const { data, error } = await client.rpc("firo_search_records", {
           p_dataset_id: datasetId,
           p_conditions: activeConditions(filter),
-          p_logic: filter.logic,
+          p_logic: "and",
           p_search: query,
           p_limit: 500,
           p_offset: offset
@@ -329,12 +329,7 @@ export default function App() {
           </div>
           <div className="domain-section">
             <div className="domain-title"><strong>Ek alan filtreleri</strong><span>Veri setindeki diğer kolonlara doğrudan koşul ekle</span></div>
-            <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
-              <label className="domain-label" style={{margin:0}}>Koşulların birleşimi</label>
-              <select value={filter.logic} onChange={e => { setPage(0); setFilter(prev => ({...prev,logic:e.target.value as "and" | "or"})); }}>
-                <option value="and">Tümü sağlansın (VE)</option><option value="or">En az biri sağlansın (VEYA)</option>
-              </select>
-            </div>
+            <div className="muted" style={{fontSize:12,marginBottom:10}}>Tüm oran ve skor koşulları birlikte uygulanır (VE).</div>
             {(filter.conditions ?? []).map(c => <div className="condition" key={c.id} style={{display:"grid",gridTemplateColumns:"minmax(150px,1fr) minmax(120px,.8fr) minmax(100px,.8fr) 30px",gap:8,alignItems:"center",marginBottom:8}}>
               <select value={c.field} onChange={e => updateCondition(c.id,{field:e.target.value})}>
                 {fields.filter(f => f.is_filterable).map(f => <option key={f.field_key} value={f.field_key}>{displayField(f,fields)}</option>)}
