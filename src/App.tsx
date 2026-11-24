@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { Activity, ArrowDownToLine, Plus, Trash2, Upload, LogOut, Save, SlidersHorizontal, Database, Search, X, RefreshCw } from "lucide-react";
-import { applyFilter, displayField, downloadCsv, operators, parseCsv, type Condition, type DataType, type Field, type FilterDefinition, type Group } from "./lib";
+import { displayField, downloadCsv, operators, parseCsv, type Condition, type DataType, type Field, type FilterDefinition, type Group } from "./lib";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -17,6 +17,8 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false); const [message, setMessage] = useState("");
   const [datasets, setDatasets] = useState<Dataset[]>([]); const [datasetId, setDatasetId] = useState("");
   const [fields, setFields] = useState<Field[]>([]); const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [totalFiltered, setTotalFiltered] = useState(0); const [page, setPage] = useState(0); const [exporting, setExporting] = useState(false);
+  const PAGE_SIZE = 100;
   const [filter, setFilter] = useState<FilterDefinition>(emptyDef); const [saved, setSaved] = useState<Saved[]>([]);
   const [filterName, setFilterName] = useState(""); const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false); const [showAuth, setShowAuth] = useState(false);
@@ -29,7 +31,8 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
   useEffect(() => { if (session?.user?.id) void loadDatasets(); else { setDatasets([]); setDatasetId(""); setRows([]); setFields([]); } }, [session?.user?.id]);
-  useEffect(() => { if (datasetId) { setFilter(emptyDef); setQuery(""); void loadDataset(datasetId); } }, [datasetId]);
+  useEffect(() => { if (datasetId) { setFilter(emptyDef); setQuery(""); setPage(0); void loadDataset(datasetId); } }, [datasetId]);
+  useEffect(() => { if (datasetId && fields.length) void loadPage(datasetId, filter, query, page); }, [datasetId, filter, query, page, fields.length]);
 
   async function loadDatasets() {
     if (!client) return;
@@ -41,23 +44,71 @@ export default function App() {
   async function loadDataset(id: string) {
     if (!client) return;
     setBusy(true);
+    setRows([]);
+    setTotalFiltered(0);
     const [{ data: cols, error: ce }, { data: filters, error: fe }] = await Promise.all([
       client.from("filter_dataset_columns").select("*").eq("dataset_id", id).order("ordinal"),
       client.from("filter_saved_filters").select("id,name,definition").eq("dataset_id", id).order("created_at", { ascending: false })
     ]);
-    const allRecords: Record<string, unknown>[] = [];
-    let page = 0; let recordError: any = null;
-    while (page < 50000) {
-      const { data: batch, error } = await client.from("filter_dataset_records").select("data").eq("dataset_id", id).order("row_number").range(page, page + 999);
-      if (error) { recordError = error; break; }
-      allRecords.push(...(batch ?? []).map((r: any) => r.data as Record<string, unknown>));
-      if (!batch || batch.length < 1000) break;
-      page += 1000;
-    }
-    if (ce || fe || recordError) setMessage(ce?.message ?? fe?.message ?? recordError?.message ?? "Veri yüklenemedi.");
+    if (ce || fe) setMessage(ce?.message ?? fe?.message ?? "Veri alanları yüklenemedi.");
     const mapped = (cols ?? []).map((f: any) => ({ ...f, data_type: f.data_type as DataType, semantic_group: f.semantic_group as Group, is_filterable: f.is_filterable !== false })) as Field[];
-    setFields(mapped); setRows(allRecords);
-    setSaved((filters ?? []) as Saved[]); setBusy(false);
+    setFields(mapped);
+    setSaved((filters ?? []) as Saved[]);
+    setBusy(false);
+  }
+  async function loadPage(id: string, definition: FilterDefinition, search: string, pageIndex: number) {
+    if (!client) return;
+    setBusy(true);
+    const { data, error } = await client.rpc("firo_search_records", {
+      p_dataset_id: id,
+      p_conditions: definition.conditions,
+      p_logic: definition.logic,
+      p_search: search,
+      p_limit: PAGE_SIZE,
+      p_offset: pageIndex * PAGE_SIZE
+    });
+    if (error) {
+      setMessage("Veri sorgusu başarısız: " + error.message);
+      setRows([]);
+      setTotalFiltered(0);
+    } else {
+      const result = data as { total_count?: number; rows?: Array<{ row_number: number; data: Record<string, unknown> }> };
+      setRows((result?.rows ?? []).map(item => item.data));
+      setTotalFiltered(Number(result?.total_count ?? 0));
+    }
+    setBusy(false);
+  }
+  async function exportAllResults() {
+    if (!client || !datasetId || exporting || totalFiltered === 0) return;
+    setExporting(true);
+    setMessage("Filtre sonuçları CSV için hazırlanıyor...");
+    try {
+      const all: Record<string, unknown>[] = [];
+      let offset = 0;
+      while (offset < totalFiltered) {
+        const { data, error } = await client.rpc("firo_search_records", {
+          p_dataset_id: datasetId,
+          p_conditions: filter.conditions,
+          p_logic: filter.logic,
+          p_search: query,
+          p_limit: 500,
+          p_offset: offset
+        });
+        if (error) throw error;
+        const result = data as { rows?: Array<{ row_number: number; data: Record<string, unknown> }> };
+        const batch = (result?.rows ?? []).map(item => item.data);
+        if (!batch.length) break;
+        all.push(...batch);
+        offset += batch.length;
+        setMessage(`CSV hazırlanıyor: ${all.length.toLocaleString("tr-TR")} / ${totalFiltered.toLocaleString("tr-TR")}`);
+      }
+      downloadCsv(all, fields);
+      setMessage(`${all.length.toLocaleString("tr-TR")} kayıt CSV olarak dışa aktarıldı.`);
+    } catch (error: any) {
+      setMessage("Dışa aktarma başarısız: " + (error?.message ?? "Bilinmeyen hata"));
+    } finally {
+      setExporting(false);
+    }
   }
   async function signIn(e: React.FormEvent) {
     e.preventDefault(); if (!client) return; setAuthBusy(true); setMessage("");
@@ -193,12 +244,7 @@ export default function App() {
     if (!client) return; const { error } = await client.from("filter_saved_filters").delete().eq("id", id);
     if (error) setMessage(error.message); else setSaved(prev => prev.filter(s => s.id !== id));
   }
-  const filtered = useMemo(() => applyFilter(rows, filter), [rows, filter]);
-  const visibleRows = useMemo(() => {
-    const q = query.trim().toLocaleLowerCase("tr");
-    if (!q) return filtered;
-    return filtered.filter(r => fields.some(f => String(r[f.field_key] ?? "").toLocaleLowerCase("tr").includes(q)));
-  }, [filtered, query, fields]);
+  const visibleRows = rows;
   const displayFields = fields.slice(0, 12);
   const activeDataset = datasets.find(d => d.id === datasetId);
 
@@ -220,18 +266,19 @@ export default function App() {
       {!datasets.length ? <section className="empty-state"><div className="empty-icon"><Upload size={25}/></div><h2>İlk veri setini yükle</h2><p>CSV dosyanı içe aktar. Kolonlar otomatik algılanır; yeni alanlar için kod değişikliği gerekmez.</p><label className="primary upload-button"><Upload size={16}/> CSV dosyası seç<input type="file" accept=".csv,text/csv" onChange={e => { void importFile(e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>İlk sürüm: CSV · En fazla 50.000 satır / dosya</small></section> :
       <div className="workspace">
         <section className="panel filters-panel"><div className="panel-heading"><div><SlidersHorizontal size={17}/><h2>Filtre koşulları</h2></div><span className="count-pill">{filter.conditions.length} koşul</span></div>
-          <div className="logic-row"><span>Koşulların bağlanma şekli</span><div className="segmented"><button className={filter.logic === "and" ? "selected" : ""} onClick={() => setFilter(p => ({...p,logic:"and"}))}>VE</button><button className={filter.logic === "or" ? "selected" : ""} onClick={() => setFilter(p => ({...p,logic:"or"}))}>VEYA</button></div></div>
+          <div className="logic-row"><span>Koşulların bağlanma şekli</span><div className="segmented"><button className={filter.logic === "and" ? "selected" : ""} onClick={() => { setFilter(p => ({...p,logic:"and"})); setPage(0); }}>VE</button><button className={filter.logic === "or" ? "selected" : ""} onClick={() => { setFilter(p => ({...p,logic:"or"})); setPage(0); }}>VEYA</button></div></div>
           {filter.conditions.length === 0 && <p className="muted no-conditions">Henüz koşul eklenmedi. Bir alan seçerek filtre oluşturmaya başla.</p>}
           {filter.conditions.map((c, i) => <div className="condition" key={c.id}><span className="condition-index">{i + 1}</span><select value={c.field} onChange={e => updateCondition(c.id,{field:e.target.value})}>{fields.filter(f => f.is_filterable).map(f => <option key={f.field_key} value={f.field_key}>{displayField(f,fields)}</option>)}</select><select value={c.operator} onChange={e => updateCondition(c.id,{operator:e.target.value})}>{operators.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>{!["empty","not_empty"].includes(c.operator) && <input value={c.value} onChange={e => updateCondition(c.id,{value:e.target.value})} placeholder="Değer..." /> }<label className="not-toggle" title="Bu koşulu tersine çevir"><input type="checkbox" checked={!!c.negate} onChange={e => updateCondition(c.id,{negate:e.target.checked})}/> NOT</label><button className="remove-condition" onClick={() => setFilter(p => ({...p,conditions:p.conditions.filter(x => x.id !== c.id)}))}><X size={16}/></button></div>)}
-          <div className="filter-actions"><button className="secondary" onClick={addCondition}><Plus size={16}/> Koşul ekle</button><button className="text-button" onClick={() => setFilter(emptyDef)}>Temizle</button></div>
+          <div className="filter-actions"><button className="secondary" onClick={addCondition}><Plus size={16}/> Koşul ekle</button><button className="text-button" onClick={() => { setFilter(emptyDef); setPage(0); }}>Temizle</button></div>
           <div className="save-row"><input value={filterName} onChange={e => setFilterName(e.target.value)} placeholder="Filtre adı..." /><button className="secondary" onClick={saveFilter} disabled={!filterName.trim()}><Save size={15}/> Kaydet</button></div>
           {saved.length > 0 && <div className="saved-list"><span className="section-label">KAYITLI FİLTRELER</span>{saved.map(s => <div className="saved-item" key={s.id}><button onClick={() => setFilter(s.definition)}>{s.name}</button><button title="Kaydı sil" onClick={() => void removeSaved(s.id)}><Trash2 size={14}/></button></div>)}</div>}
           <div className="field-groups"><span className="section-label">ALGILANAN ALANLAR · {fields.length}</span>{(["match","odds","outcome","other"] as Group[]).map(g => <div className="field-group" key={g}><span>{groupNames[g]}</span><b>{fields.filter(f => f.semantic_group === g).length}</b></div>)}</div>
         </section>
         <section className="results">
-          <div className="stats-grid"><div className="stat-card"><span>TOPLAM KAYIT</span><strong>{rows.length.toLocaleString("tr-TR")}</strong></div><div className="stat-card"><span>FİLTRE SONUCU</span><strong>{filtered.length.toLocaleString("tr-TR")}</strong></div><div className="stat-card"><span>GÖSTERİLEN</span><strong>{visibleRows.length.toLocaleString("tr-TR")}</strong></div><div className="stat-card"><span>ALAN SAYISI</span><strong>{fields.length}</strong></div></div>
-          <div className="table-panel"><div className="table-toolbar"><div><h2>Sonuç kayıtları</h2><span>{busy ? "Veriler yükleniyor..." : "Filtre koşullarına uyan kayıtlar"}</span></div><div className="table-tools"><div className="search-box"><Search size={15}/><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Sonuçlarda ara..." /></div><button className="secondary" onClick={() => downloadCsv(visibleRows,fields)} disabled={!visibleRows.length}><ArrowDownToLine size={15}/> Dışa aktar</button><button className="icon-button" onClick={() => void loadDataset(datasetId)} title="Yenile"><RefreshCw size={16}/></button></div></div>
-            {busy ? <div className="table-empty">Veriler yükleniyor...</div> : <div className="table-scroll"><table><thead><tr><th>#</th>{displayFields.map(f => <th key={f.field_key} title={f.source_name}>{displayField(f,fields)}</th>)}</tr></thead><tbody>{visibleRows.slice(0,500).map((r,i) => <tr key={i}><td className="row-number">{i+1}</td>{displayFields.map(f => <td key={f.field_key}>{String(r[f.field_key] ?? "—")}</td>)}</tr>)}</tbody></table>{!visibleRows.length && <div className="table-empty">Bu koşullara uyan kayıt bulunamadı.</div>}{visibleRows.length > 500 && <div className="table-foot">Ekranda ilk 500 kayıt gösteriliyor. CSV dışa aktarımı tüm sonuçları içerir.</div>}</div>}
+          <div className="stats-grid"><div className="stat-card"><span>TOPLAM KAYIT</span><strong>{rows.length.toLocaleString("tr-TR")}</strong></div><div className="stat-card"><span>FİLTRE SONUCU</span><strong>{totalFiltered.toLocaleString("tr-TR")}</strong></div><div className="stat-card"><span>GÖSTERİLEN</span><strong>{rows.length.toLocaleString("tr-TR")}</strong></div><div className="stat-card"><span>ALAN SAYISI</span><strong>{fields.length}</strong></div></div>
+          <div className="table-panel"><div className="table-toolbar"><div><h2>Sonuç kayıtları</h2><span>{busy ? "Veriler yükleniyor..." : "Filtre koşullarına uyan kayıtlar"}</span></div><div className="table-tools"><div className="search-box"><Search size={15}/><input value={query} onChange={e => { setQuery(e.target.value); setPage(0); }} placeholder="Sonuçlarda ara..." /></div><button className="secondary" onClick={() => void exportAllResults()} disabled={!totalFiltered || exporting}>{exporting ? "Hazırlanıyor..." : <><ArrowDownToLine size={15}/> Dışa aktar</>}</button><button className="icon-button" onClick={() => void loadDataset(datasetId)} title="Yenile"><RefreshCw size={16}/></button></div></div>
+            {busy ? <div className="table-empty">Veriler yükleniyor...</div> : <div className="table-scroll"><table><thead><tr><th>#</th>{displayFields.map(f => <th key={f.field_key} title={f.source_name}>{displayField(f,fields)}</th>)}</tr></thead><tbody>{visibleRows.slice(0,500).map((r,i) => <tr key={i}><td className="row-number">{i+1}</td>{displayFields.map(f => <td key={f.field_key}>{String(r[f.field_key] ?? "—")}</td>)}</tr>)}</tbody></table>{!visibleRows.length && !busy && <div className="table-empty">Bu koşullara uyan kayıt bulunamadı.</div>}</div>
+            <div className="table-foot" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}><span>{totalFiltered.toLocaleString("tr-TR")} sonuç · Sayfa {totalFiltered ? page + 1 : 0} / {Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE))}</span><div style={{display:"flex",gap:8}}><button className="secondary" onClick={() => setPage(p => Math.max(0,p-1))} disabled={page===0 || busy}>Önceki</button><button className="secondary" onClick={() => setPage(p => p+1)} disabled={busy || (page+1)*PAGE_SIZE>=totalFiltered}>Sonraki</button></div></div>}
           </div><p className="data-note">Maç, oran ve gerçekleşmiş sonuç alanları ayrı gruplandırılır. Filtre motoru mevcut veri satırlarını değerlendirir; maç öncesi/sonrası uygunluğu veri alanlarının anlamına göre ayrıca seçilmelidir.</p>
         </section>
       </div>}
