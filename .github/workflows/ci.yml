@@ -1,6 +1,7 @@
 name: FIRO build and API checks
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
