@@ -93,8 +93,10 @@ export default function App() {
       const { error: colErr } = await client.from("filter_dataset_columns").insert(cols);
       if (colErr) throw colErr;
 
-      // 1.000 satırlık paketler ve en fazla 3 eşzamanlı istek.
-      const batchSize = 1000;
+      // Küçük paketler kullan: 1.000 satırlık istekler geniş CSV'lerde 10 MB'ı aşabiliyor.
+      // 100 satır/paket ve 2 işçi, Supabase Free veritabanına aşırı yük bindirmeden aktarır.
+      const batchSize = 100;
+      const concurrency = 2;
       const batches: Array<Array<Record<string, unknown>>> = [];
       for (let i = 0; i < parsed.rows.length; i += batchSize) {
         batches.push(parsed.rows.slice(i, i + batchSize).map((data, j) => ({
@@ -112,10 +114,18 @@ export default function App() {
           if (batchIndex >= batches.length) return;
           let lastError: any = null;
           for (let attempt = 0; attempt < 4; attempt++) {
-            const { error } = await client.from("filter_dataset_records").insert(batches[batchIndex]);
-            if (!error) { lastError = null; break; }
-            lastError = error;
-            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 500 * (2 ** attempt)));
+            try {
+              // Ağ yanıtı kaybolsa bile tekrar deneme yinelenen satır üretmesin.
+              const { error } = await client.from("filter_dataset_records").upsert(
+                batches[batchIndex],
+                { onConflict: "dataset_id,row_number", ignoreDuplicates: true }
+              );
+              if (!error) { lastError = null; break; }
+              lastError = error;
+            } catch (error) {
+              lastError = error;
+            }
+            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 750 * (2 ** attempt)));
           }
           if (lastError) throw lastError;
           completedRows += batches[batchIndex].length;
@@ -123,7 +133,7 @@ export default function App() {
         }
       };
       const workerResults = await Promise.allSettled(
-        Array.from({ length: Math.min(3, batches.length) }, () => worker())
+        Array.from({ length: Math.min(concurrency, batches.length) }, () => worker())
       );
       const failedWorker = workerResults.find(result => result.status === "rejected");
       if (failedWorker?.status === "rejected") throw failedWorker.reason;
