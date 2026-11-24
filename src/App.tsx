@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { Activity, ArrowDownToLine, Plus, Trash2, Upload, LogOut, Save, SlidersHorizontal, Database, Search, X, RefreshCw } from "lucide-react";
-import { displayField, downloadCsv, parseCsv, type Condition, type DataType, type Field, type FilterDefinition, type Group, type DomainFilters } from "./lib";
+import { displayField, downloadCsv, operators, parseCsv, type Condition, type DataType, type Field, type FilterDefinition, type Group, type DomainFilters } from "./lib";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -23,6 +23,7 @@ export default function App() {
   const [filter, setFilter] = useState<FilterDefinition>(emptyDef); const [saved, setSaved] = useState<Saved[]>([]);
   const [filterName, setFilterName] = useState(""); const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false); const [showAuth, setShowAuth] = useState(false);
+  const requestSeq = useRef(0);
   const client = supabase;
 
   useEffect(() => {
@@ -59,7 +60,7 @@ export default function App() {
   }
   function activeConditions(definition: FilterDefinition) {
     const d = definition.domain ?? emptyDomain;
-    const conditions: Condition[] = [];
+    const conditions: Condition[] = (definition.conditions ?? []).filter(c => c.field && c.operator && (["empty", "not_empty"].includes(c.operator) || c.value.trim() !== ""));
     for (const range of d.oddsRanges ?? []) {
       if (range.min.trim()) conditions.push({ id: range.id + "-min", field: range.field, operator: "gte", value: range.min.trim() });
       if (range.max.trim()) conditions.push({ id: range.id + "-max", field: range.field, operator: "lte", value: range.max.trim() });
@@ -87,6 +88,7 @@ export default function App() {
   async function loadPage(id: string, definition: FilterDefinition, search: string, pageIndex: number) {
     if (!client) return;
     setBusy(true);
+    const requestId = ++requestSeq.current;
     const { data, error } = await client.rpc("firo_search_records", {
       p_dataset_id: id,
       p_conditions: activeConditions(definition),
@@ -95,6 +97,7 @@ export default function App() {
       p_limit: PAGE_SIZE,
       p_offset: pageIndex * PAGE_SIZE
     });
+    if (requestId !== requestSeq.current) return;
     if (error) {
       setMessage("Veri sorgusu başarısız: " + error.message);
       setRows([]);
@@ -323,6 +326,26 @@ export default function App() {
               <div><label className="domain-label">Toplam gol</label><select value={filter.domain?.totalBucket ?? ""} onChange={e => updateDomain({totalBucket:e.target.value})}><option value="">Hepsi</option><option value="0-1">0–1 gol</option><option value="2-3">2–3 gol</option><option value="4-5">4–5 gol</option><option value="6+">6+ gol</option></select></div>
               <div><label className="domain-label">Karşılıklı gol sonucu</label><select value={filter.domain?.btts ?? ""} onChange={e => updateDomain({btts:e.target.value})}><option value="">Hepsi</option><option value="Var">KG Var</option><option value="Yok">KG Yok</option></select></div>
             </div>
+          </div>
+          <div className="domain-section">
+            <div className="domain-title"><strong>Ek alan filtreleri</strong><span>Veri setindeki diğer kolonlara doğrudan koşul ekle</span></div>
+            <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+              <label className="domain-label" style={{margin:0}}>Koşulların birleşimi</label>
+              <select value={filter.logic} onChange={e => { setPage(0); setFilter(prev => ({...prev,logic:e.target.value as "and" | "or"})); }}>
+                <option value="and">Tümü sağlansın (VE)</option><option value="or">En az biri sağlansın (VEYA)</option>
+              </select>
+            </div>
+            {(filter.conditions ?? []).map(c => <div className="condition" key={c.id} style={{display:"grid",gridTemplateColumns:"minmax(150px,1fr) minmax(120px,.8fr) minmax(100px,.8fr) 30px",gap:8,alignItems:"center",marginBottom:8}}>
+              <select value={c.field} onChange={e => updateCondition(c.id,{field:e.target.value})}>
+                {fields.filter(f => f.is_filterable).map(f => <option key={f.field_key} value={f.field_key}>{displayField(f,fields)}</option>)}
+              </select>
+              <select value={c.operator} onChange={e => updateCondition(c.id,{operator:e.target.value})}>
+                {operators.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
+              </select>
+              <input value={c.value} disabled={c.operator === "empty" || c.operator === "not_empty"} placeholder="Değer" onChange={e => updateCondition(c.id,{value:e.target.value})}/>
+              <button className="remove-condition" title="Koşulu kaldır" onClick={() => { setPage(0); setFilter(prev => ({...prev,conditions:prev.conditions.filter(x => x.id !== c.id)})); }}><X size={16}/></button>
+            </div>)}
+            <button className="secondary" onClick={addCondition}><Plus size={16}/> Alan koşulu ekle</button>
           </div>
           <div className="filter-actions"><button className="text-button" onClick={() => { setFilter(emptyDef); setPage(0); }}>Tüm filtreleri temizle</button></div>
           <div className="save-row"><input value={filterName} onChange={e => setFilterName(e.target.value)} placeholder="Filtre adı..."/><button className="secondary" onClick={saveFilter} disabled={!filterName.trim()}><Save size={15}/> Kaydet</button></div>
