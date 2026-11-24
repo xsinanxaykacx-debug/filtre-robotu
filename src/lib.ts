@@ -4,7 +4,14 @@ export type DataType = "text" | "number" | "date" | "time" | "boolean" | "json";
 export type Group = "match" | "odds" | "outcome" | "other";
 export type Field = { id?: string; source_name: string; field_key: string; ordinal: number; data_type: DataType; semantic_group: Group; is_filterable: boolean };
 export type Condition = { id: string; field: string; operator: string; value: string; negate?: boolean };
-export type FilterDefinition = { version: 1; logic: "and" | "or"; conditions: Condition[] };
+export type OddsRange = { id: string; field: string; min: string; max: string };
+export type DomainFilters = {
+  oddsRanges: OddsRange[];
+  htHome: string; htAway: string;
+  ftHome: string; ftAway: string;
+  totalBucket: string; btts: string;
+};
+export type FilterDefinition = { version: 1; logic: "and" | "or"; conditions: Condition[]; domain?: DomainFilters };
 
 export function parseCsv(file: File): Promise<{ fields: Field[]; rows: Record<string, unknown>[] }> {
   return new Promise((resolve, reject) => {
