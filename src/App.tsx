@@ -74,32 +74,84 @@ export default function App() {
   async function importFile(file?: File) {
     if (!client || !file || !session?.user?.id) return;
     if (!file.name.toLowerCase().endsWith(".csv")) { setMessage("Şimdilik CSV dosyası yükleyebilirsin."); return; }
-    setBusy(true); setMessage("");
+    setBusy(true); setMessage("CSV dosyası okunuyor...");
     let createdId = "";
     try {
       const parsed = await parseCsv(file);
       if (!parsed.fields.length || !parsed.rows.length) throw new Error("Dosyada aktarılacak satır bulunamadı.");
       if (parsed.rows.length > 50000) throw new Error("Tek dosyada en fazla 50.000 satır aktarılabilir.");
-      const { data: ds, error: de } = await client.from("filter_datasets").insert({ owner_id: session.user.id, name: file.name.replace(/\.csv$/i, ""), source_filename: file.name, source_format: "csv", row_count: parsed.rows.length }).select("id").single();
-      if (de) throw de; createdId = ds.id;
+      const { data: ds, error: de } = await client.from("filter_datasets").insert({
+        owner_id: session.user.id,
+        name: file.name.replace(/\\.csv$/i, ""),
+        source_filename: file.name,
+        source_format: "csv",
+        row_count: parsed.rows.length
+      }).select("id").single();
+      if (de) throw de;
+      createdId = ds.id;
+
       const cols = parsed.fields.map(f => ({ ...f, dataset_id: createdId, owner_id: session.user.id }));
       const { error: colErr } = await client.from("filter_dataset_columns").insert(cols);
       if (colErr) throw colErr;
-      for (let i = 0; i < parsed.rows.length; i += 250) {
-        const batch = parsed.rows.slice(i, i + 250).map((data, j) => ({ dataset_id: createdId, owner_id: session.user.id, row_number: i + j + 1, data }));
-        const { error } = await client.from("filter_dataset_records").insert(batch);
-        if (error) throw error;
+
+      // 1.000 kayıtlık paketler, en fazla 3 eşzamanlı istek; geçici ağ/limit hatalarında tekrar dene.
+      const batchSize = 1000;
+      const batches: Array<Array<Record<string, unknown>>> = [];
+      for (let i = 0; i < parsed.rows.length; i += batchSize) {
+        batches.push(parsed.rows.slice(i, i + batchSize).map((data, j) => ({
+          dataset_id: createdId,
+          owner_id: session.user.id,
+          row_number: i + j + 1,
+          data
+        })));
       }
-      setDatasets(prev => [{ id: createdId, name: file.name.replace(/\.csv$/i, ""), row_count: parsed.rows.length, source_filename: file.name, created_at: new Date().toISOString() }, ...prev]);
-      setDatasetId(createdId); setFilter(emptyDef); setMessage(`${parsed.rows.length.toLocaleString("tr-TR")} satır içe aktarıldı.`);
+      let nextBatch = 0;
+      let completedRows = 0;
+      const worker = async () => {
+        while (true) {
+          const batchIndex = nextBatch++;
+          if (batchIndex >= batches.length) return;
+          let lastError: any = null;
+          for (let attempt = 0; attempt < 4; attempt++) {
+            const { error } = await client.from("filter_dataset_records").insert(batches[batchIndex]);
+            if (!error) { lastError = null; break; }
+            lastError = error;
+            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 500 * (2 ** attempt)));
+          }
+          if (lastError) throw lastError;
+          completedRows += batches[batchIndex].length;
+          setMessage(`CSV aktarılıyor: ${completedRows.toLocaleString("tr-TR")} / ${parsed.rows.length.toLocaleString("tr-TR")} satır`);
+        }
+      };
+      const workerResults = await Promise.allSettled(
+        Array.from({ length: Math.min(3, batches.length) }, () => worker())
+      );
+      const failedWorker = workerResults.find(result => result.status === "rejected");
+      if (failedWorker?.status === "rejected") throw failedWorker.reason;
+
+      setDatasets(prev => [{
+        id: createdId,
+        name: file.name.replace(/\\.csv$/i, ""),
+        row_count: parsed.rows.length,
+        source_filename: file.name,
+        created_at: new Date().toISOString()
+      }, ...prev]);
+      setDatasetId(createdId);
+      setFilter(emptyDef);
+      setMessage(`${parsed.rows.length.toLocaleString("tr-TR")} satır içe aktarıldı.`);
     } catch (err: any) {
+      let cleanupWarning = "";
       if (createdId) {
-        await client.from("filter_dataset_records").delete().eq("dataset_id", createdId);
-        await client.from("filter_dataset_columns").delete().eq("dataset_id", createdId);
-        await client.from("filter_saved_filters").delete().eq("dataset_id", createdId);
-        await client.from("filter_datasets").delete().eq("id", createdId);
+        const cleanup = await Promise.all([
+          client.from("filter_dataset_records").delete().eq("dataset_id", createdId),
+          client.from("filter_dataset_columns").delete().eq("dataset_id", createdId),
+          client.from("filter_saved_filters").delete().eq("dataset_id", createdId),
+          client.from("filter_datasets").delete().eq("id", createdId)
+        ]);
+        const cleanupError = cleanup.find(result => result.error)?.error;
+        if (cleanupError) cleanupWarning = ` Temizlik tamamlanamadı: ${cleanupError.message}`;
       }
-      setMessage(err?.message ?? "İçe aktarma başarısız.");
+      setMessage(`İçe aktarma başarısız: ${err?.message ?? "Bilinmeyen hata"}.${cleanupWarning}`);
     } finally { setBusy(false); }
   }
   async function deleteDataset() {
