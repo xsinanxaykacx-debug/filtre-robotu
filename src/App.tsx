@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { Activity, ArrowDownToLine, Plus, Trash2, Upload, LogOut, Save, SlidersHorizontal, Database, Search, X, RefreshCw } from "lucide-react";
-import { applyFilter, displayField, downloadCsv, operators, parseCsv, type Condition, type DataType, type Field, type FilterDefinition, type Group } from "./lib";
+import { applyFilter, displayField, downloadCsv, operators, parseCsv, type Condition, type DataType, type Field, type FilterDefinition, type Group } from "./lib";\nimport FixtureMatcher from "./FixtureMatcher";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -156,7 +156,7 @@ export default function App() {
     </aside>
     <main className="main">
       <header className="topbar"><div><div className="eyebrow">VERİ ÇALIŞMA ALANI</div><h1>{activeDataset?.name ?? "Yeni çalışma"}</h1></div><div className="top-actions"><label className="upload-button"><Upload size={16}/> CSV içe aktar<input type="file" accept=".csv,text/csv" onChange={e => { void importFile(e.target.files?.[0]); e.currentTarget.value = ""; }} /></label>{activeDataset && <button className="icon-button danger" title="Veri setini sil" onClick={deleteDataset}><Trash2 size={17}/></button>}</div></header>
-      {message && <div className="notice-bar">{message}<button onClick={() => setMessage("")}><X size={15}/></button></div>}
+      <FixtureMatcher rows={rows} fields={fields} hasDataset={!!activeDataset} />\n      {message && <div className="notice-bar">{message}<button onClick={() => setMessage("")}><X size={15}/></button></div>}
       {!datasets.length ? <section className="empty-state"><div className="empty-icon"><Upload size={25}/></div><h2>İlk veri setini yükle</h2><p>CSV dosyanı içe aktar. Kolonlar otomatik algılanır; yeni alanlar için kod değişikliği gerekmez.</p><label className="primary upload-button"><Upload size={16}/> CSV dosyası seç<input type="file" accept=".csv,text/csv" onChange={e => { void importFile(e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>İlk sürüm: CSV · En fazla 50.000 satır / dosya</small></section> :
       <div className="workspace">
         <section className="panel filters-panel"><div className="panel-heading"><div><SlidersHorizontal size={17}/><h2>Filtre koşulları</h2></div><span className="count-pill">{filter.conditions.length} koşul</span></div>
