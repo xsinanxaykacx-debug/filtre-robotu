@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
-from mackolik_provider import collect_upcoming
+from api.mackolik_provider import collect_upcoming
 
 
 class handler(BaseHTTPRequestHandler):
@@ -13,7 +13,6 @@ class handler(BaseHTTPRequestHandler):
         if parsed.path.rstrip("/") != "/api/fixtures/today":
             self._send(404, {"error": "not_found"})
             return
-        params = parse_qs(parsed.query)
         # The public FIRO endpoint intentionally exposes today's fixtures only.
         try:
             rows = collect_upcoming(days=1, workers=3)
