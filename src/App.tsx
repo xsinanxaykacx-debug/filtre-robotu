@@ -56,12 +56,18 @@ export default function App() {
     setSaved((filters ?? []) as Saved[]);
     setBusy(false);
   }
+  function activeConditions(definition: FilterDefinition) {
+    return definition.conditions.filter(condition =>
+      condition.field && condition.operator &&
+      (["empty", "not_empty"].includes(condition.operator) || condition.value.trim() !== "")
+    );
+  }
   async function loadPage(id: string, definition: FilterDefinition, search: string, pageIndex: number) {
     if (!client) return;
     setBusy(true);
     const { data, error } = await client.rpc("firo_search_records", {
       p_dataset_id: id,
-      p_conditions: definition.conditions,
+      p_conditions: activeConditions(definition),
       p_logic: definition.logic,
       p_search: search,
       p_limit: PAGE_SIZE,
@@ -88,7 +94,7 @@ export default function App() {
       while (offset < totalFiltered) {
         const { data, error } = await client.rpc("firo_search_records", {
           p_dataset_id: datasetId,
-          p_conditions: filter.conditions,
+          p_conditions: activeConditions(filter),
           p_logic: filter.logic,
           p_search: query,
           p_limit: 500,
