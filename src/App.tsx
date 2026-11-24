@@ -29,7 +29,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
   useEffect(() => { if (session?.user?.id) void loadDatasets(); else { setDatasets([]); setDatasetId(""); setRows([]); setFields([]); } }, [session?.user?.id]);
-  useEffect(() => { if (datasetId) void loadDataset(datasetId); }, [datasetId]);
+  useEffect(() => { if (datasetId) { setFilter(emptyDef); setQuery(""); void loadDataset(datasetId); } }, [datasetId]);
 
   async function loadDatasets() {
     if (!client) return;
@@ -92,14 +92,29 @@ export default function App() {
       setDatasets(prev => [{ id: createdId, name: file.name.replace(/\.csv$/i, ""), row_count: parsed.rows.length, source_filename: file.name, created_at: new Date().toISOString() }, ...prev]);
       setDatasetId(createdId); setFilter(emptyDef); setMessage(`${parsed.rows.length.toLocaleString("tr-TR")} satır içe aktarıldı.`);
     } catch (err: any) {
-      if (createdId) await client.from("filter_datasets").delete().eq("id", createdId);
+      if (createdId) {
+        await client.from("filter_dataset_records").delete().eq("dataset_id", createdId);
+        await client.from("filter_dataset_columns").delete().eq("dataset_id", createdId);
+        await client.from("filter_saved_filters").delete().eq("dataset_id", createdId);
+        await client.from("filter_datasets").delete().eq("id", createdId);
+      }
       setMessage(err?.message ?? "İçe aktarma başarısız.");
     } finally { setBusy(false); }
   }
   async function deleteDataset() {
     if (!client || !datasetId || !confirm("Bu veri seti ve kayıtlı filtreleri silinsin mi?")) return;
+    const children = await Promise.all([
+      client.from("filter_dataset_records").delete().eq("dataset_id", datasetId),
+      client.from("filter_dataset_columns").delete().eq("dataset_id", datasetId),
+      client.from("filter_saved_filters").delete().eq("dataset_id", datasetId)
+    ]);
+    const childError = children.find(x => x.error)?.error;
+    if (childError) { setMessage(childError.message); return; }
     const { error } = await client.from("filter_datasets").delete().eq("id", datasetId);
-    if (error) setMessage(error.message); else { setDatasets(prev => prev.filter(d => d.id !== datasetId)); setDatasetId(""); setRows([]); setFields([]); setMessage("Veri seti silindi."); }
+    if (error) setMessage(error.message); else {
+      const remaining = datasets.filter(d => d.id !== datasetId);
+      setDatasets(remaining); setDatasetId(remaining[0]?.id ?? ""); setRows([]); setFields([]); setMessage("Veri seti silindi.");
+    }
   }
   function updateCondition(id: string, patch: Partial<Condition>) {
     setFilter(prev => ({ ...prev, conditions: prev.conditions.map(c => c.id === id ? { ...c, ...patch } : c) }));
