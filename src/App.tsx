@@ -63,6 +63,11 @@ export default function App() {
     for (const range of d.oddsRanges ?? []) {
       if (range.min.trim()) conditions.push({ id: range.id + "-min", field: range.field, operator: "gte", value: range.min.trim() });
       if (range.max.trim()) conditions.push({ id: range.id + "-max", field: range.field, operator: "lte", value: range.max.trim() });
+      // 1/2 market means first-half home win and full-time away win, not odds alone.
+      if (range.field === "ilk_yar_mac_sonucu_1_2" && (range.min.trim() || range.max.trim())) {
+        conditions.push({ id: range.id + "-ht-result", field: "iy_skor", operator: "result_eq", value: "1" });
+        conditions.push({ id: range.id + "-ft-result", field: "skor", operator: "result_eq", value: "2" });
+      }
     }
     if (d.htHome.trim() !== "" && d.htAway.trim() !== "") conditions.push({ id: "iy-score", field: "iy_skor", operator: "score_eq", value: `${d.htHome.trim()}-${d.htAway.trim()}` });
     if (d.ftHome.trim() !== "" && d.ftAway.trim() !== "") conditions.push({ id: "ft-score", field: "skor", operator: "score_eq", value: `${d.ftHome.trim()}-${d.ftAway.trim()}` });
