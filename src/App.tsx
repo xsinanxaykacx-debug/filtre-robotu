@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { Activity, ArrowDownToLine, Plus, Trash2, Upload, LogOut, Save, SlidersHorizontal, Database, Search, X, RefreshCw } from "lucide-react";
-import { displayField, downloadCsv, operators, parseCsv, type Condition, type DataType, type Field, type FilterDefinition, type Group } from "./lib";
+import { displayField, downloadCsv, parseCsv, type Condition, type DataType, type Field, type FilterDefinition, type Group, type DomainFilters } from "./lib";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 const supabase: SupabaseClient | null = url && key ? createClient(url, key) : null;
 type Dataset = { id: string; name: string; row_count: number; source_filename: string; created_at: string };
 type Saved = { id: string; name: string; definition: FilterDefinition };
-const emptyDef: FilterDefinition = { version: 1, logic: "and", conditions: [] };
+const emptyDomain: DomainFilters = { oddsRanges: [], htHome: "", htAway: "", ftHome: "", ftAway: "", totalBucket: "", btts: "" };
+const emptyDef: FilterDefinition = { version: 1, logic: "and", conditions: [], domain: emptyDomain };
 const groupNames: Record<Group, string> = { match: "Maç bilgileri", odds: "Oran / market alanları", outcome: "Gerçekleşen sonuçlar", other: "Diğer alanlar" };
 
 export default function App() {
@@ -57,10 +58,26 @@ export default function App() {
     setBusy(false);
   }
   function activeConditions(definition: FilterDefinition) {
-    return definition.conditions.filter(condition =>
-      condition.field && condition.operator &&
-      (["empty", "not_empty"].includes(condition.operator) || condition.value.trim() !== "")
-    );
+    const d = definition.domain ?? emptyDomain;
+    const conditions: Condition[] = [];
+    for (const range of d.oddsRanges ?? []) {
+      if (range.min.trim()) conditions.push({ id: range.id + "-min", field: range.field, operator: "gte", value: range.min.trim() });
+      if (range.max.trim()) conditions.push({ id: range.id + "-max", field: range.field, operator: "lte", value: range.max.trim() });
+    }
+    if (d.htHome.trim() !== "" && d.htAway.trim() !== "") conditions.push({ id: "iy-score", field: "iy_skor", operator: "score_eq", value: `${d.htHome.trim()}-${d.htAway.trim()}` });
+    if (d.ftHome.trim() !== "" && d.ftAway.trim() !== "") conditions.push({ id: "ft-score", field: "skor", operator: "score_eq", value: `${d.ftHome.trim()}-${d.ftAway.trim()}` });
+    if (d.totalBucket) conditions.push({ id: "total-bucket", field: "skor", operator: "total_bucket", value: d.totalBucket });
+    if (d.btts) conditions.push({ id: "btts", field: "skor", operator: "btts", value: d.btts });
+    return conditions;
+  }
+  function updateDomain(patch: Partial<DomainFilters>) {
+    setPage(0);
+    setFilter(prev => ({ ...prev, logic: "and", domain: { ...(prev.domain ?? emptyDomain), ...patch } }));
+  }
+  function addOddsRange() {
+    const options = fields.filter(f => f.semantic_group === "odds" && !/istatistik|kartlar/i.test(f.source_name));
+    if (!options.length) return;
+    updateDomain({ oddsRanges: [...(filter.domain?.oddsRanges ?? []), { id: crypto.randomUUID(), field: options[0].field_key, min: "", max: "" }] });
   }
   async function loadPage(id: string, definition: FilterDefinition, search: string, pageIndex: number) {
     if (!client) return;
@@ -273,13 +290,38 @@ export default function App() {
       {message && <div className="notice-bar">{message}<button onClick={() => setMessage("")}><X size={15}/></button></div>}
       {!datasets.length ? <section className="empty-state"><div className="empty-icon"><Upload size={25}/></div><h2>İlk veri setini yükle</h2><p>CSV dosyanı içe aktar. Kolonlar otomatik algılanır; yeni alanlar için kod değişikliği gerekmez.</p><label className="primary upload-button"><Upload size={16}/> CSV dosyası seç<input type="file" accept=".csv,text/csv" onChange={e => { void importFile(e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>İlk sürüm: CSV · En fazla 50.000 satır / dosya</small></section> :
       <div className="workspace">
-        <section className="panel filters-panel"><div className="panel-heading"><div><SlidersHorizontal size={17}/><h2>Filtre koşulları</h2></div><span className="count-pill">{filter.conditions.length} koşul</span></div>
-          <div className="logic-row"><span>Koşulların bağlanma şekli</span><div className="segmented"><button className={filter.logic === "and" ? "selected" : ""} onClick={() => { setFilter(p => ({...p,logic:"and"})); setPage(0); }}>VE</button><button className={filter.logic === "or" ? "selected" : ""} onClick={() => { setFilter(p => ({...p,logic:"or"})); setPage(0); }}>VEYA</button></div></div>
-          {filter.conditions.length === 0 && <p className="muted no-conditions">Henüz koşul eklenmedi. Bir alan seçerek filtre oluşturmaya başla.</p>}
-          {filter.conditions.map((c, i) => <div className="condition" key={c.id}><span className="condition-index">{i + 1}</span><select value={c.field} onChange={e => updateCondition(c.id,{field:e.target.value})}>{fields.filter(f => f.is_filterable).map(f => <option key={f.field_key} value={f.field_key}>{displayField(f,fields)}</option>)}</select><select value={c.operator} onChange={e => updateCondition(c.id,{operator:e.target.value})}>{operators.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>{!["empty","not_empty"].includes(c.operator) && <input value={c.value} onChange={e => updateCondition(c.id,{value:e.target.value})} placeholder="Değer..." /> }<label className="not-toggle" title="Bu koşulu tersine çevir"><input type="checkbox" checked={!!c.negate} onChange={e => updateCondition(c.id,{negate:e.target.checked})}/> NOT</label><button className="remove-condition" onClick={() => { setPage(0); setFilter(p => ({...p,conditions:p.conditions.filter(x => x.id !== c.id)})); }}><X size={16}/></button></div>)}
-          <div className="filter-actions"><button className="secondary" onClick={addCondition}><Plus size={16}/> Koşul ekle</button><button className="text-button" onClick={() => { setFilter(emptyDef); setPage(0); }}>Temizle</button></div>
-          <div className="save-row"><input value={filterName} onChange={e => setFilterName(e.target.value)} placeholder="Filtre adı..." /><button className="secondary" onClick={saveFilter} disabled={!filterName.trim()}><Save size={15}/> Kaydet</button></div>
-          {saved.length > 0 && <div className="saved-list"><span className="section-label">KAYITLI FİLTRELER</span>{saved.map(s => <div className="saved-item" key={s.id}><button onClick={() => { setFilter(s.definition); setPage(0); }}>{s.name}</button><button title="Kaydı sil" onClick={() => void removeSaved(s.id)}><Trash2 size={14}/></button></div>)}</div>}
+        <section className="panel filters-panel">
+          <div className="panel-heading"><div><SlidersHorizontal size={17}/><h2>Maç ve oran filtreleri</h2></div><span className="count-pill">{activeConditions(filter).length} koşul</span></div>
+          <p className="muted" style={{fontSize:13,margin:"0 0 18px"}}>Eklediğin bütün koşullar birlikte uygulanır (VE).</p>
+          <div className="domain-section">
+            <div className="domain-title"><strong>Oran aralıkları</strong><span>Her market için minimum ve maksimum oran</span></div>
+            {(filter.domain?.oddsRanges ?? []).map((range, i) => <div className="condition" key={range.id} style={{display:"grid",gridTemplateColumns:"minmax(150px,1fr) 100px 100px 30px",gap:8,alignItems:"center"}}>
+              <select value={range.field} onChange={e => updateDomain({oddsRanges:(filter.domain?.oddsRanges ?? []).map(x => x.id === range.id ? {...x,field:e.target.value} : x)})}>
+                {fields.filter(f => f.semantic_group === "odds" && !/istatistik|kartlar/i.test(f.source_name)).map(f => <option key={f.field_key} value={f.field_key}>{displayField(f,fields)}</option>)}
+              </select>
+              <input inputMode="decimal" value={range.min} placeholder="Min oran" onChange={e => updateDomain({oddsRanges:(filter.domain?.oddsRanges ?? []).map(x => x.id === range.id ? {...x,min:e.target.value} : x)})}/>
+              <input inputMode="decimal" value={range.max} placeholder="Maks oran" onChange={e => updateDomain({oddsRanges:(filter.domain?.oddsRanges ?? []).map(x => x.id === range.id ? {...x,max:e.target.value} : x)})}/>
+              <button className="remove-condition" title="Oran filtresini kaldır" onClick={() => updateDomain({oddsRanges:(filter.domain?.oddsRanges ?? []).filter(x => x.id !== range.id)})}><X size={16}/></button>
+            </div>)}
+            <button className="secondary" onClick={addOddsRange}><Plus size={16}/> Oran marketi ekle</button>
+          </div>
+          <div className="domain-section">
+            <div className="domain-title"><strong>Gerçekleşen skor</strong><span>Skor alanları oranlardan bağımsızdır</span></div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12}}>
+              <div><label className="domain-label">İY skoru</label><div className="score-inputs"><input type="number" min="0" step="1" placeholder="Ev" value={filter.domain?.htHome ?? ""} onChange={e => updateDomain({htHome:e.target.value})}/><span>–</span><input type="number" min="0" step="1" placeholder="Dep" value={filter.domain?.htAway ?? ""} onChange={e => updateDomain({htAway:e.target.value})}/></div></div>
+              <div><label className="domain-label">Maç skoru</label><div className="score-inputs"><input type="number" min="0" step="1" placeholder="Ev" value={filter.domain?.ftHome ?? ""} onChange={e => updateDomain({ftHome:e.target.value})}/><span>–</span><input type="number" min="0" step="1" placeholder="Dep" value={filter.domain?.ftAway ?? ""} onChange={e => updateDomain({ftAway:e.target.value})}/></div></div>
+            </div>
+          </div>
+          <div className="domain-section">
+            <div className="domain-title"><strong>Gerçekleşen maç sonuçları</strong><span>Skordan hesaplanır; bahis oranı değildir</span></div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12}}>
+              <div><label className="domain-label">Toplam gol</label><select value={filter.domain?.totalBucket ?? ""} onChange={e => updateDomain({totalBucket:e.target.value})}><option value="">Hepsi</option><option value="0-1">0–1 gol</option><option value="2-3">2–3 gol</option><option value="4-5">4–5 gol</option><option value="6+">6+ gol</option></select></div>
+              <div><label className="domain-label">Karşılıklı gol sonucu</label><select value={filter.domain?.btts ?? ""} onChange={e => updateDomain({btts:e.target.value})}><option value="">Hepsi</option><option value="Var">KG Var</option><option value="Yok">KG Yok</option></select></div>
+            </div>
+          </div>
+          <div className="filter-actions"><button className="text-button" onClick={() => { setFilter(emptyDef); setPage(0); }}>Tüm filtreleri temizle</button></div>
+          <div className="save-row"><input value={filterName} onChange={e => setFilterName(e.target.value)} placeholder="Filtre adı..."/><button className="secondary" onClick={saveFilter} disabled={!filterName.trim()}><Save size={15}/> Kaydet</button></div>
+          {saved.length > 0 && <div className="saved-list"><span className="section-label">KAYITLI FİLTRELER</span>{saved.map(s => <div className="saved-item" key={s.id}><button onClick={() => { setFilter({...s.definition, domain:s.definition.domain ?? emptyDomain}); setPage(0); }}>{s.name}</button><button title="Kaydı sil" onClick={() => void removeSaved(s.id)}><Trash2 size={14}/></button></div>)}</div>}
           <div className="field-groups"><span className="section-label">ALGILANAN ALANLAR · {fields.length}</span>{(["match","odds","outcome","other"] as Group[]).map(g => <div className="field-group" key={g}><span>{groupNames[g]}</span><b>{fields.filter(f => f.semantic_group === g).length}</b></div>)}</div>
         </section>
         <section className="results">
