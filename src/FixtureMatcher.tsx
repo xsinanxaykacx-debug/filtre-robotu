@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Activity, RefreshCw } from "lucide-react";
-import type { Field, MackolikFixture } from "./lib";
+import type { Field } from "./lib";
+type MackolikFixture = { match_id: string; date: string; home: string; away: string; league: string; odds_home: number; odds_draw: number; odds_away: number; odds_captured_at: string; source: string; match_url: string };
 
 type Props = { rows: Record<string, unknown>[]; fields: Field[]; hasDataset: boolean };
 type Match = { row: Record<string, unknown>; score: string; result: string; similarity: number; distance: number };
