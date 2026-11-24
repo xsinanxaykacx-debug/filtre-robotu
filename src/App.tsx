@@ -177,7 +177,7 @@ export default function App() {
       if (parsed.rows.length > 50000) throw new Error("Tek dosyada en fazla 50.000 satır aktarılabilir.");
       const { data: ds, error: de } = await client.from("filter_datasets").insert({
         owner_id: session.user.id,
-        name: file.name.replace(/\\.csv$/i, ""),
+        name: file.name.replace(/\.csv$/i, ""),
         source_filename: file.name,
         source_format: "csv",
         row_count: parsed.rows.length
@@ -222,7 +222,7 @@ export default function App() {
       const failedWorker = workerResults.find(result => result.status === "rejected");
       if (failedWorker?.status === "rejected") throw failedWorker.reason;
       setDatasets(prev => [{
-        id: createdId, name: file.name.replace(/\\.csv$/i, ""), row_count: parsed.rows.length,
+        id: createdId, name: file.name.replace(/\.csv$/i, ""), row_count: parsed.rows.length,
         source_filename: file.name, created_at: new Date().toISOString()
       }, ...prev]);
       setDatasetId(createdId);
