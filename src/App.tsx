@@ -228,6 +228,7 @@ export default function App() {
     }
   }
   function updateCondition(id: string, patch: Partial<Condition>) {
+    setPage(0);
     setFilter(prev => ({ ...prev, conditions: prev.conditions.map(c => c.id === id ? { ...c, ...patch } : c) }));
   }
   function addCondition() {
