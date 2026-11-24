@@ -16,8 +16,9 @@ export function parseCsv(file: File): Promise<{ fields: Field[]; rows: Record<st
         const headers = matrix[0].map((h, i) => String(h ?? "").trim() || `Kolon ${i + 1}`);
         const counts = new Map<string, number>();
         const fields = headers.map((source_name, ordinal) => {
-          const count = (counts.get(source_name) ?? 0) + 1; counts.set(source_name, count);
-          const field_key = `${slug(source_name)}${count > 1 ? "__" + count : ""}`;
+          const baseKey = slug(source_name);
+          const count = (counts.get(baseKey) ?? 0) + 1; counts.set(baseKey, count);
+          const field_key = `${baseKey}${count > 1 ? "__" + count : ""}`;
           const samples = matrix.slice(1, 101).map(r => r?.[ordinal]).filter(v => v !== undefined && String(v).trim() !== "");
           return { source_name, field_key, ordinal, data_type: inferType(source_name, samples), semantic_group: inferGroup(source_name), is_filterable: true };
         });
