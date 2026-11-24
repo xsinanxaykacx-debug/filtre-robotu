@@ -41,14 +41,22 @@ export default function App() {
   async function loadDataset(id: string) {
     if (!client) return;
     setBusy(true);
-    const [{ data: cols, error: ce }, { data: recs, error: re }, { data: filters }] = await Promise.all([
+    const [{ data: cols, error: ce }, { data: filters, error: fe }] = await Promise.all([
       client.from("filter_dataset_columns").select("*").eq("dataset_id", id).order("ordinal"),
-      client.from("filter_dataset_records").select("data").eq("dataset_id", id).order("row_number").limit(50000),
       client.from("filter_saved_filters").select("id,name,definition").eq("dataset_id", id).order("created_at", { ascending: false })
     ]);
-    if (ce || re) setMessage(ce?.message ?? re?.message ?? "Veri yüklenemedi.");
+    const allRecords: Record<string, unknown>[] = [];
+    let page = 0; let recordError: any = null;
+    while (page < 50000) {
+      const { data: batch, error } = await client.from("filter_dataset_records").select("data").eq("dataset_id", id).order("row_number").range(page, page + 999);
+      if (error) { recordError = error; break; }
+      allRecords.push(...(batch ?? []).map((r: any) => r.data as Record<string, unknown>));
+      if (!batch || batch.length < 1000) break;
+      page += 1000;
+    }
+    if (ce || fe || recordError) setMessage(ce?.message ?? fe?.message ?? recordError?.message ?? "Veri yüklenemedi.");
     const mapped = (cols ?? []).map((f: any) => ({ ...f, data_type: f.data_type as DataType, semantic_group: f.semantic_group as Group, is_filterable: f.is_filterable !== false })) as Field[];
-    setFields(mapped); setRows((recs ?? []).map((r: any) => r.data as Record<string, unknown>));
+    setFields(mapped); setRows(allRecords);
     setSaved((filters ?? []) as Saved[]); setBusy(false);
   }
   async function signIn(e: React.FormEvent) {
