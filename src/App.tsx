@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { Activity, ArrowDownToLine, Plus, Trash2, Upload, LogOut, Save, SlidersHorizontal, Database, Search, X, RefreshCw } from "lucide-react";
-import { applyFilter, displayField, downloadCsv, operators, parseCsv, type Condition, type DataType, type Field, type FilterDefinition, type Group } from "./lib";\nimport FixtureMatcher from "./FixtureMatcher";
+import { applyFilter, displayField, downloadCsv, operators, parseCsv, type Condition, type DataType, type Field, type FilterDefinition, type Group } from "./lib";
+import FixtureMatcher from "./FixtureMatcher";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
