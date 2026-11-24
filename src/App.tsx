@@ -62,10 +62,11 @@ export default function App() {
     const d = definition.domain ?? emptyDomain;
     const conditions: Condition[] = (definition.conditions ?? []).filter(c => c.field && c.operator && (["empty", "not_empty"].includes(c.operator) || c.value.trim() !== ""));
     for (const range of d.oddsRanges ?? []) {
-      if (range.min.trim()) conditions.push({ id: range.id + "-min", field: range.field, operator: "gte", value: range.min.trim() });
-      if (range.max.trim()) conditions.push({ id: range.id + "-max", field: range.field, operator: "lte", value: range.max.trim() });
-      // 1/2 market means first-half home win and full-time away win, not odds alone.
-      if (range.field === "ilk_yar_mac_sonucu_1_2" && (range.min.trim() || range.max.trim())) {
+      const min = range.min.trim().replace(",", ".");
+      const max = range.max.trim().replace(",", ".");
+      if (min) conditions.push({ id: range.id + "-min", field: range.field, operator: "gte", value: min });
+      if (max) conditions.push({ id: range.id + "-max", field: range.field, operator: "lte", value: max });
+      if (range.field === "ilk_yar_mac_sonucu_1_2" && (min || max)) {
         conditions.push({ id: range.id + "-ht-result", field: "iy_skor", operator: "result_eq", value: "1" });
         conditions.push({ id: range.id + "-ft-result", field: "skor", operator: "result_eq", value: "2" });
       }
@@ -83,15 +84,27 @@ export default function App() {
   function addOddsRange() {
     const options = fields.filter(f => f.semantic_group === "odds" && f.data_type === "number" && !/istatistik|kartlar|oran durumu/i.test(f.source_name));
     if (!options.length) return;
-    updateDomain({ oddsRanges: [...(filter.domain?.oddsRanges ?? []), { id: crypto.randomUUID(), field: options[0].field_key, min: "", max: "" }] });
+    const defaultField = options.find(f => f.field_key === "mac_sonucu_1" || f.source_name.trim().toLocaleLowerCase("tr-TR") === "maç sonucu | 1") ?? options[0];
+    updateDomain({ oddsRanges: [...(filter.domain?.oddsRanges ?? []), { id: crypto.randomUUID(), field: defaultField.field_key, min: "", max: "" }] });
   }
   async function loadPage(id: string, definition: FilterDefinition, search: string, pageIndex: number) {
     if (!client) return;
     setBusy(true);
     const requestId = ++requestSeq.current;
+    const conditions = activeConditions(definition);
+    const invalidRange = (definition.domain?.oddsRanges ?? []).find(r => {
+      const min = r.min.trim().replace(",", ".");
+      const max = r.max.trim().replace(",", ".");
+      return min !== "" && max !== "" && (!Number.isFinite(Number(min)) || !Number.isFinite(Number(max)) || Number(min) > Number(max));
+    });
+    if (invalidRange) {
+      setBusy(false);
+      setMessage("Oran aralığı hatalı: minimum oran maksimum orandan büyük olamaz.");
+      return;
+    }
     const { data, error } = await client.rpc("firo_search_records", {
       p_dataset_id: id,
-      p_conditions: activeConditions(definition),
+      p_conditions: conditions,
       p_logic: "and",
       p_search: search,
       p_limit: PAGE_SIZE,
@@ -106,6 +119,7 @@ export default function App() {
       const result = data as { total_count?: number; rows?: Array<{ row_number: number; data: Record<string, unknown> }> };
       setRows((result?.rows ?? []).map(item => item.data));
       setTotalFiltered(Number(result?.total_count ?? 0));
+      setMessage("");
     }
     setBusy(false);
   }
@@ -163,20 +177,16 @@ export default function App() {
       if (parsed.rows.length > 50000) throw new Error("Tek dosyada en fazla 50.000 satır aktarılabilir.");
       const { data: ds, error: de } = await client.from("filter_datasets").insert({
         owner_id: session.user.id,
-        name: file.name.replace(/\.csv$/i, ""),
+        name: file.name.replace(/\\.csv$/i, ""),
         source_filename: file.name,
         source_format: "csv",
         row_count: parsed.rows.length
       }).select("id").single();
       if (de) throw de;
       createdId = ds.id;
-
       const cols = parsed.fields.map(f => ({ ...f, dataset_id: createdId, owner_id: session.user.id }));
       const { error: colErr } = await client.from("filter_dataset_columns").insert(cols);
       if (colErr) throw colErr;
-
-      // Küçük paketler kullan: 1.000 satırlık istekler geniş CSV'lerde 10 MB'ı aşabiliyor.
-      // 100 satır/paket ve 2 işçi, Supabase Free veritabanına aşırı yük bindirmeden aktarır.
       const batchSize = 100;
       const concurrency = 2;
       const batches: Array<Array<Record<string, unknown>>> = [];
@@ -197,16 +207,10 @@ export default function App() {
           let lastError: any = null;
           for (let attempt = 0; attempt < 4; attempt++) {
             try {
-              // Ağ yanıtı kaybolsa bile tekrar deneme yinelenen satır üretmesin.
-              const { error } = await client.from("filter_dataset_records").upsert(
-                batches[batchIndex],
-                { onConflict: "dataset_id,row_number", ignoreDuplicates: true }
-              );
+              const { error } = await client.from("filter_dataset_records").upsert(batches[batchIndex], { onConflict: "dataset_id,row_number", ignoreDuplicates: true });
               if (!error) { lastError = null; break; }
               lastError = error;
-            } catch (error) {
-              lastError = error;
-            }
+            } catch (error) { lastError = error; }
             if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 750 * (2 ** attempt)));
           }
           if (lastError) throw lastError;
@@ -214,18 +218,12 @@ export default function App() {
           setMessage(`CSV aktarılıyor: ${completedRows.toLocaleString("tr-TR")} / ${parsed.rows.length.toLocaleString("tr-TR")} satır`);
         }
       };
-      const workerResults = await Promise.allSettled(
-        Array.from({ length: Math.min(concurrency, batches.length) }, () => worker())
-      );
+      const workerResults = await Promise.allSettled(Array.from({ length: Math.min(concurrency, batches.length) }, () => worker()));
       const failedWorker = workerResults.find(result => result.status === "rejected");
       if (failedWorker?.status === "rejected") throw failedWorker.reason;
-
       setDatasets(prev => [{
-        id: createdId,
-        name: file.name.replace(/\.csv$/i, ""),
-        row_count: parsed.rows.length,
-        source_filename: file.name,
-        created_at: new Date().toISOString()
+        id: createdId, name: file.name.replace(/\\.csv$/i, ""), row_count: parsed.rows.length,
+        source_filename: file.name, created_at: new Date().toISOString()
       }, ...prev]);
       setDatasetId(createdId);
       setFilter(emptyDef);
@@ -303,7 +301,7 @@ export default function App() {
           <p className="muted" style={{fontSize:13,margin:"0 0 18px"}}>Eklediğin bütün koşullar birlikte uygulanır (VE).</p>
           <div className="domain-section">
             <div className="domain-title"><strong>Oran aralıkları</strong><span>Her market için minimum ve maksimum oran</span></div>
-            {(filter.domain?.oddsRanges ?? []).map((range, i) => <div className="condition" key={range.id} style={{display:"grid",gridTemplateColumns:"minmax(150px,1fr) 100px 100px 30px",gap:8,alignItems:"center"}}>
+            {(filter.domain?.oddsRanges ?? []).map((range) => <div className="condition" key={range.id} style={{display:"grid",gridTemplateColumns:"minmax(150px,1fr) 100px 100px 30px",gap:8,alignItems:"center"}}>
               <select value={range.field} onChange={e => updateDomain({oddsRanges:(filter.domain?.oddsRanges ?? []).map(x => x.id === range.id ? {...x,field:e.target.value} : x)})}>
                 {fields.filter(f => f.semantic_group === "odds" && f.data_type === "number" && !/istatistik|kartlar|oran durumu/i.test(f.source_name)).map(f => <option key={f.field_key} value={f.field_key}>{displayField(f,fields)}</option>)}
               </select>
